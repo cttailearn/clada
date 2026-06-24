@@ -1,6 +1,26 @@
 # SPDX-FileCopyrightText: Lada Authors
 # SPDX-License-Identifier: AGPL-3.0
 
+"""YOLO segmentation model wrapper used by Lada's restoration pipeline.
+
+Originally written for Ultralytics YOLO11 segmentation. The same wrapper
+also works with YOLO26-seg thanks to its backward-compatible Ultralytics
+API surface.
+
+Notable compatibility notes for YOLO26 (released in ultralytics 8.4.0):
+
+* YOLO26-seg uses an end-to-end ("one-to-one") detection head by default
+  which makes NMS optional. We detect this via
+  ``getattr(self.model, "end2end", False)`` and forward the flag to
+  ``ultralytics.utils.nms.non_max_suppression``.
+* YOLO26 drops the DFL module; the regression output is a single
+  ``(x1, y1, x2, y2)`` tuple per detection. The mask coefficients and
+  segmentation prototypes are still carried at the same tensor offsets
+  used by YOLO11, so ``ops.process_mask`` continues to work unchanged.
+* Both YOLO11-seg and YOLO26-seg checkpoints can be loaded transparently
+  by this wrapper: ``task == 'segment'`` is the only invariant we assert.
+"""
+
 import numpy as np
 import torch
 from ultralytics import YOLO
@@ -16,10 +36,19 @@ from lada.utils import ImageTensor
 from lada.utils.torch_letterbox import PyTorchLetterBox
 from lada.utils.ultralytics_utils import UltralyticsResults
 
-class Yolo11SegmentationModel:
+class YoloSegmentationModel:
+    """Thin wrapper around an Ultralytics YOLO segmentation model
+    (YOLO11-seg or YOLO26-seg) tuned for the Lada inference path.
+
+    The wrapper handles letterboxing, half-precision, batched inference
+    and conversion of raw network outputs into Ultralytics ``Results``
+    objects containing both boxes and segmentation masks.
+    """
+
     def __init__(self, model_path: str, device, imgsz=640, fp16=False, **kwargs):
         yolo_model = YOLO(model_path)
-        assert yolo_model.task == 'segment'
+        assert yolo_model.task == 'segment', \
+            f"Expected a segmentation model (YOLO11-seg or YOLO26-seg), got task={yolo_model.task!r}"
         self.stride = 32
         self.imgsz = check_imgsz(imgsz, stride=self.stride, min_dim=2)
         self.letterbox: PyTorchLetterBox|LetterBox = LetterBox(self.imgsz, auto=True, stride=self.stride)
@@ -48,7 +77,7 @@ class Yolo11SegmentationModel:
         im = im.transpose((0, 3, 1, 2))  # BHWC to BCHW, (n, 3, h, w)
         im = np.ascontiguousarray(im)  # contiguous
         return torch.from_numpy(im)
-    
+
     def _preprocess_gpu(self, imgs: list[ImageTensor]) -> torch.Tensor:
         return self.letterbox(torch.stack(imgs, dim=0))
 

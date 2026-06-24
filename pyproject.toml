@@ -10,7 +10,7 @@ license = "AGPL-3.0"
 license-files = ["LICENSE.md", "LICENSES/*.txt"]
 readme = "README.md"
 dependencies = [
-    "ultralytics==8.4.4", # Pinned as we apply a patch
+    "ultralytics>=8.4.0", # YOLO26 support requires >=8.4.0 (released 2026-01). Pinned lower bound; minor upgrades allowed. We still apply remove_ultralytics_telemetry.patch
     "numpy",
     "opencv-python==4.12.0.88", # Version 4.13 doesn't show any text for HighGUI Trackbars on Linux / no font warning
     "av>=16.1.0", # Versions before 16.1.0 didn't come with support for QSV encoders needed for Lada Intel Arc support

@@ -3,7 +3,7 @@ import logging
 import torch
 
 from lada import LOG_LEVEL, ModelFiles
-from lada.models.yolo.yolo11_segmentation_model import Yolo11SegmentationModel
+from lada.models.yolo.yolo_segmentation_model import YoloSegmentationModel
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=LOG_LEVEL)
@@ -38,5 +38,5 @@ def load_models(
             logger.info("Mosaic detection model v2 does not support detecting face mosaics. Use detection models v3 or newer. Ignoring...")
     else:
         classes = None
-    mosaic_detection_model = Yolo11SegmentationModel(mosaic_detection_model_path, device, classes=classes, conf=0.15, fp16=fp16)
+    mosaic_detection_model = YoloSegmentationModel(mosaic_detection_model_path, device, classes=classes, conf=0.15, fp16=fp16)
     return mosaic_detection_model, mosaic_restoration_model, pad_mode

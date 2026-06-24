@@ -17,14 +17,14 @@ from lada.utils import image_utils, video_utils, threading_utils, mask_utils, Im
 from lada.utils import visualization_utils
 from lada.restorationpipeline.mosaic_detector import MosaicDetector
 from lada.restorationpipeline.mosaic_detector import Clip
-from lada.models.yolo.yolo11_segmentation_model import Yolo11SegmentationModel
+from lada.models.yolo.yolo_segmentation_model import YoloSegmentationModel
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=LOG_LEVEL)
 
 class FrameRestorer:
     def __init__(self, device, video_file, max_clip_length, mosaic_restoration_model_name,
-                 mosaic_detection_model: Yolo11SegmentationModel, mosaic_restoration_model, preferred_pad_mode,
+                 mosaic_detection_model: YoloSegmentationModel, mosaic_restoration_model, preferred_pad_mode,
                  mosaic_detection=False):
         self.device = torch.device(device)
         self.mosaic_restoration_model_name = mosaic_restoration_model_name
