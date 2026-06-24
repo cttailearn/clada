@@ -21,12 +21,15 @@ def register_all_modules():
     from .pixelwise_loss import CharbonnierLoss
     from .real_basicvsr import RealBasicVSR
     from .unet_disc import UNetDiscriminatorWithSpectralNorm
+    from .projected_disc import ProjectedDiscriminator
     from .vis_backend import TensorboardVisBackend
     from .visualization_hook import VisualizationHook
     from .evaluator import Evaluator
     from .psnr import PSNR
     from .ssim import SSIM
     from .multi_loops import MultiValLoop
+    from lada.models.rvrt.rvrt_net import RVRTNet, RVRTGanNet
+    from lada.models.rvrt.rvrt_gan import RVRTGan
 
     never_created = DefaultScope.get_current_instance() is None or not DefaultScope.check_instance_created(SCOPE)
     if never_created:

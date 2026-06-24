@@ -6,3 +6,5 @@ def register_all_modules():
     register_all_modules()
     from lada.models.basicvsrpp.basicvsrpp_gan import BasicVSRPlusPlusGanNet, BasicVSRPlusPlusGan
     from lada.models.basicvsrpp.mosaic_video_dataset import MosaicVideoDataset
+    from lada.models.rvrt.rvrt_net import RVRTNet, RVRTGanNet
+    from lada.models.rvrt.rvrt_gan import RVRTGan

@@ -5,64 +5,30 @@ import torch
 import torch.autograd as autograd
 
 from lada.models.basicvsrpp.mmagic.registry import MODELS
-from lada.models.basicvsrpp.mmagic.basicvsr_plusplus_net import BasicVSRPlusPlusNet
 from lada.models.basicvsrpp.mmagic.real_basicvsr import RealBasicVSR
 
-@MODELS.register_module()
-class BasicVSRPlusPlusGanNet(BasicVSRPlusPlusNet):
-    def __init__(self,
-                **kwargs):
-
-        super().__init__(**kwargs)
-        self.spynet.requires_grad_(False)
-
-
-    def forward(self, lqs, return_lqs=False):
-        """Forward function for BasicVSR++.
-
-        Args:
-            lqs (tensor): Input low quality (LQ) sequence with
-                shape (n, t, c, h, w).
-            return_lqs (bool): Whether to return LQ sequence. Default: False.
-
-        Returns:
-            Tensor: Output HR sequence.
-        """
-        outputs = super().forward(lqs)
-
-        if return_lqs:
-            return outputs, lqs
-        else:
-            return outputs
 
 @MODELS.register_module()
-class BasicVSRPlusPlusGan(RealBasicVSR):
-    """RealBasicVSR model for real-world video super-resolution.
+class RVRTGan(RealBasicVSR):
+    """RVRT GAN training model with R1 gradient penalty.
 
-    Ref:
-    Investigating Tradeoffs in Real-World Video Super-Resolution, arXiv
+    Uses RVRTNet/RVRTGanNet as generator with ProjectedDiscriminator
+    + hinge loss + R1 regularization.
 
     Args:
-        generator (dict): Config for the generator.
-        discriminator (dict, optional): Config for the discriminator.
-            Default: None.
-        gan_loss (dict, optional): Config for the gan loss.
-            Note that the loss weight in gan loss is only for the generator.
-        pixel_loss (dict, optional): Config for the pixel loss. Default: None.
-        perceptual_loss (dict, optional): Config for the perceptual loss.
-            Default: None.
-        train_cfg (dict): Config for training. Default: None.
-            You may change the training of gan by setting:
-            `disc_steps`: how many discriminator updates after one generate
-            update;
-            `disc_init_steps`: how many discriminator updates at the start of
-            the training.
-            These two keys are useful when training with WGAN.
-        test_cfg (dict): Config for testing. Default: None.
-        init_cfg (dict, optional): The weight initialized config for
-            :class:`BaseModule`. Default: None.
-        data_preprocessor (dict, optional): The pre-process config of
-            :class:`BaseDataPreprocessor`. Default: None.
+        generator (dict): Config for RVRTNet or RVRTGanNet.
+        discriminator (dict, optional): Config for discriminator.
+        gan_loss (dict, optional): Config for GAN loss.
+        pixel_loss (dict, optional): Config for pixel loss.
+        perceptual_loss (dict, optional): Config for perceptual loss.
+        is_use_ema (bool): Use EMA on generator. Default: False.
+        r1_weight (float): R1 gradient penalty weight. Default: 0.0
+            (disabled). Recommended: 1.0 with hinge loss.
+        r1_interval (int): Compute R1 every N steps. Default: 1.
+        train_cfg (dict): Training config.
+        test_cfg (dict): Testing config.
+        init_cfg (dict): Initialization config.
+        data_preprocessor (dict): Data preprocessor config.
     """
 
     def __init__(self,
@@ -97,12 +63,11 @@ class BasicVSRPlusPlusGan(RealBasicVSR):
         self.r1_weight = r1_weight
         self.r1_interval = r1_interval
 
-
     def d_step_with_optim(self, batch_outputs, batch_gt_data, optim_wrapper):
-        """D step with R1 gradient penalty regularization.
+        """D step with optional R1 gradient penalty.
 
-        Overrides RealBasicVSR to add optional R1 gradient penalty
-        computed on real data for improved training stability.
+        Overrides RealBasicVSR to add R1 gradient penalty computed
+        on real data for improved training stability.
         """
         log_vars = dict()
         d_optim_wrapper = optim_wrapper['discriminator']
@@ -110,7 +75,7 @@ class BasicVSRPlusPlusGan(RealBasicVSR):
         with d_optim_wrapper.optim_context(self):
             loss_d_real = self.d_step_real(batch_outputs, batch_gt_data)
 
-        # add R1 gradient penalty on real data
+        # R1 gradient penalty on real data
         if self.r1_weight > 0 and self.step_counter % self.r1_interval == 0:
             gt_gan = batch_gt_data[2].detach().requires_grad_(True)
             real_pred = self.discriminator(gt_gan)
@@ -146,11 +111,11 @@ class BasicVSRPlusPlusGan(RealBasicVSR):
         return log_vars
 
     def extract_gt_data(self, data_samples):
+        """Extract GT data as (pixel, perceptual, gan) triple."""
         gt = data_samples.gt_img
         gt_pixel, gt_percep, gt_gan = gt.clone(), gt.clone(), gt.clone()
         n, t, c, h, w = gt_pixel.size()
         gt_pixel = gt_pixel.view(-1, c, h, w)
         gt_percep = gt_percep.view(-1, c, h, w)
         gt_gan = gt_gan.view(-1, c, h, w)
-
         return gt_pixel, gt_percep, gt_gan

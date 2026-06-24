@@ -14,6 +14,7 @@ from lada.models.basicvsrpp import register_all_modules
 from lada.models.basicvsrpp.basicvsrpp_gan import BasicVSRPlusPlusGan
 from lada.models.basicvsrpp.mmagic.basicvsr import BasicVSR
 from lada.models.basicvsrpp.mmagic.registry import MODELS
+from lada.models.rvrt.rvrt_gan import RVRTGan
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ def load_model(config: str | dict | None, checkpoint_path, device, fp16=False) -
     else:
         raise Exception("unsupported value for 'config', Must be either a file path to a config file or a dict definition of the model")
     model = MODELS.build(config)
-    assert isinstance(model, BasicVSRPlusPlusGan) or isinstance(model, BasicVSR), "Unknown model config. Must be either stage1 (BasicVSR) or stage2 (BasicVSRPlusPlusGan)"
+    assert isinstance(model, (BasicVSRPlusPlusGan, BasicVSR, RVRTGan)), "Unknown model config. Must be either stage1 (BasicVSR) or stage2 (BasicVSRPlusPlusGan or RVRTGan)"
     load_checkpoint(model, checkpoint_path, map_location='cpu', logger=logger)
     model.cfg = config
     model = model.to(device).eval()
@@ -71,3 +72,25 @@ def inference(model: BasicVSRPlusPlusGan | BasicVSR, video: list[Image], device)
         output_frame_shape = output[0].shape
         assert input_frame_count == output_frame_count and input_frame_shape == output_frame_shape
         return output
+
+
+def get_default_rvrt_inference_config() -> dict:
+    """Default inference config for RVRT model."""
+    return dict(
+        type='RVRTGan',
+        generator=dict(
+            type='RVRTGanNet',
+            mid_channels=64,
+            num_blocks=8,
+            num_heads=8,
+            num_points=9,
+            group_size=3,
+            group_overlap=1,
+            mlp_ratio=2.66),
+        pixel_loss=dict(type='CharbonnierLoss', loss_weight=1.0, reduction='mean'),
+        is_use_ema=True,
+        data_preprocessor=dict(
+            type='DataPreprocessor',
+            mean=[0., 0., 0.],
+            std=[255., 255., 255.],
+        ))

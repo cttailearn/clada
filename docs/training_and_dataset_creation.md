@@ -20,8 +20,13 @@ In order to work on the models and datasets you'll have to install the requireme
 
    To train the models and create your own datasets you'll also need these files
    ```shell
-   wget -P model_weights/3rd_party/ 'https://download.openmmlab.com/mmediting/restorers/basicvsr/spynet_20210409-c6c1bd09.pth'
+   # Required for RVRT generator (recommended):
    wget -P model_weights/3rd_party/ 'https://download.pytorch.org/models/vgg19-dcbb9e9d.pth'
+
+   # Required for BasicVSR++ generator (legacy) — includes SPyNet optical flow:
+   wget -P model_weights/3rd_party/ 'https://download.openmmlab.com/mmediting/restorers/basicvsr/spynet_20210409-c6c1bd09.pth'
+
+   # Required fordataset creation:
    wget -P model_weights/3rd_party/ 'https://github.com/QualityAssessment/DOVER/releases/download/v0.1.0/DOVER.pth'
    wget -P model_weights/ 'https://huggingface.co/ladaapp/lada/resolve/main/lada_nsfw_detection_model_v1.3.pt?download=true'
    wget -P model_weights/ 'https://huggingface.co/ladaapp/lada/resolve/main/lada_watermark_detection_model_v1.3.pt?download=true'
@@ -29,6 +34,9 @@ In order to work on the models and datasets you'll have to install the requireme
    wget -P model_weights/3rd_party/ 'https://github.com/ORB-HD/deface/raw/refs/tags/v1.5.0/deface/centerface.onnx'
    wget -P model_weights/3rd_party/ 'https://huggingface.co/HoyerChou/BPJDet/resolve/main/ch_head_s_1536_e150_best_mMR.pt?download=true'
    ```
+
+   > [!NOTE]
+   > RVRT does not require SPyNet optical flow weights. The EfficientNet-B0 backbone for the ProjectedDiscriminator is downloaded automatically by torchvision on first use.
 
 > [!CAUTION]
 > The last download command currently may not work as the NudeNet project is set to age-restricted.
@@ -61,6 +69,52 @@ If you're not interested in training specific models you can use the pretrained 
 > `export QT_QPA_PLATFORM=xcb`.
 
 ## Mosaic restoration model
+
+Two generator architectures are available for mosaic restoration training:
+
+| Architecture | Type | Key Innovation | Status |
+|---|---|---|---|
+| **BasicVSR++** (CVPR 2022) | CNN Recurrent | SPyNet optical flow + second-order deformable alignment + 4-branch bidirectional propagation | Legacy (still supported) |
+| **RVRT** (NeurIPS 2022) | Hybrid Recurrent + Transformer | Guided Deformable Attention (GDA) — content-adaptive deformable sampling with learned attention, no optical flow required | **Recommended** |
+
+Both use a **Projected GAN** discriminator (frozen EfficientNet backbone + trainable CNN head) with **hinge loss** and **R1 gradient penalty** for the GAN stage, replacing the original UNet discriminator with vanilla BCE loss.
+
+### RVRT Architecture (Recommended)
+
+```
+Input: (N, T=16, 3, H=256, W=256) in [0,1]
+  |
+  +-- feat_extract: Conv2d(3->64, k3) -> (N*T, 64, 256, 256)  [full resolution]
+  |
+  +-- Frame Grouping: split T frames into overlapping groups (G=3, overlap=1)
+  |
+  +-- RVRT Blocks (x8, shared, recurrent hidden state):
+  |     LayerNorm -> GDA (+res) -> LayerNorm -> FFN(GELU) (+res)
+  |     hidden = detach(last_output) -- propagated to next group
+  |
+  +-- Merge: average overlapping frame features
+  |
+  +-- Reconstruction: Conv(64->64)->LReLU->Conv(64->3)
+  |
+  +-- + lqs (global residual) -> Output: (N, T, 3, 256, 256)
+```
+
+**Key differences from BasicVSR++:**
+- No pre-computed optical flow (SPyNet) — GDA predicts sampling offsets directly from features
+- Full-resolution processing (no 4x downsample/upsample)
+- Truncated BPTT via `hidden.detach()` for constant memory across frame groups
+- ~1.1M trainable parameters (vs ~3.1M for BasicVSR++)
+
+### Projected GAN Discriminator
+
+The GAN stage uses a **ProjectedDiscriminator** (Sauer et al., NeurIPS 2021):
+- Frozen EfficientNet-B0 backbone extracts multi-scale features (4 levels, H/4 to H/32)
+- 1x1 conv projectors + trainable CNN head discriminates real vs fake
+- **Hinge loss** replaces vanilla BCE (better gradients, no saturation)
+- **R1 gradient penalty** (weight=1.0) replaces spectral norm for stable training
+
+### Dataset creation
+
 Before we can train the model we'll need to create a dataset.
 AFAIK, there are no publicly available datasets for such purpose and I'll not provide one either. But you can create your own dataset for training mosaic removal models with the following procedure:
 
@@ -81,9 +135,9 @@ Depending on your source material use the `--stride-length` option to prevent sa
 Additional metadata and filtering can be adjusted as well. Check-out the *filter* / *add-metadata* switches.
 
 Try it on a small subset of your data first to see how it works.
-Also, check out the code `MosaicVideoDataset` in `mosaic_video_dataset.py` as well as the dataloader/dataset settings in `mosaic_restoration_generic_stage{1,2}.py` in the `config` dir to understand how this generated dataset will be used in training.
+Also, check out the code `MosaicVideoDataset` in `mosaic_video_dataset.py` as well as the dataloader/dataset settings in the config files in the `configs/rvrt/` (or `configs/basicvsrpp/`) dir to understand how this generated dataset will be used in training.
 
-With the default settings only cropped NSFW scenes and their segmentation masks will be generated (two directories). Mosaics will gen generated on-the-fly while training by torch dataset `MosaicVideoDataset`.
+With the default settings only cropped NSFW scenes and their segmentation masks will be generated (two directories). Mosaics will be generated on-the-fly while training by torch dataset `MosaicVideoDataset`.
 There are options though to generate full-size scenes as well as mosaic scenes. I would not suggest to enable these options on your final large-sized dataset as it will take a lot of time and storage space.
 
 The script uses the NSFW detection model. Some filtering options are available in the training config files and in the script for automatic filtering of invalid data.
@@ -93,33 +147,68 @@ Have a look at the created metadata JSON files: You can find watermark (text,log
 
 > [!TIP]
 > I used the following workflow for manual clean-up:
-> (1) open the directory of created NSFW scenes in your file explorer in thumbnail view. (2) Wait until thumbnails have been created. (3) Based on what you can see in the thumbnail delete files if they contain watermarks or don't look like an actual NSFW scene. (4) write a shell script to delete corresponding mask and json metadata files 
+> (1) open the directory of created NSFW scenes in your file explorer in thumbnail view. (2) Wait until thumbnails have been created. (3) Based on what you can see in the thumbnail delete files if they contain watermarks or don't look like an actual NSFW scene. (4) write a shell script to delete corresponding mask and json metadata files
+
+### Training (RVRT + Projected GAN)
 
 Now, with a dataset at hand we're ready to train a model.
 
-Training the mosaic restoration model is done in two steps. You can find training scripts in the project root directory and related configuration files in the `config` directory.
-The first stage consists of training a BasicVSR++ model only with pixel loss (you'll need to create a dataset first)
+Training is done in two stages. You can find training scripts in the project root directory and related configuration files in the `configs/rvrt/` directory.
+
+**Stage 1 — Pixel-loss only pretraining:**
 ```shell
-python scripts/training/train-mosaic-restoration-basicvsrpp.py configs/basicvsrpp/mosaic_restoration_generic_stage1.py
+python scripts/training/train-mosaic-restoration-basicvsrpp.py configs/rvrt/mosaic_restoration_stage1.py
 ```
 > You can continue an interrupted run by adding `--resume` to the command line.
 
-Before we can continue training stage2 you'll have to convert the trained weights into the GAN-compatible model with the following script
+**Weight conversion (Stage 1 → Stage 2):**
+Before we can continue training stage 2, convert the trained weights into the GAN-compatible model:
 ```shell
 python scripts/training/convert-weights-basicvsrpp-stage1-to-stage2.py
 ```
-Now we can continue training with additional GAN and perceptual losses.
+
+**Stage 2 — GAN fine-tuning with ProjectedDiscriminator:**
 ```shell
-python scripts/training/train-mosaic-restoration-basicvsrpp.py configs/basicvsrpp/mosaic_restoration_generic_stage2.py --load-from experiments/basicvsrpp/mosaic_restoration_generic_stage1/iter_10000_converted.pth
+python scripts/training/train-mosaic-restoration-basicvsrpp.py configs/rvrt/mosaic_restoration_stage2_projected.py --load-from experiments/rvrt/mosaic_restoration_rvrt_stage1/iter_10000_converted.pth
 ```
 
+**Export for inference:**
 If you're happy with the model you can export it for inference and remove the discriminator model via:
 ```shell
 python scripts/training/export-weights-basicvsrpp-stage2-for-inference.py
 ```
 
+### Training (BasicVSR++ — Legacy)
+
+The original BasicVSR++ architecture remains available under `configs/basicvsrpp/`.
+
+Stage 1 (pixel loss only):
+```shell
+python scripts/training/train-mosaic-restoration-basicvsrpp.py configs/basicvsrpp/mosaic_restoration_generic_stage1.py
+```
+
+Stage 2 (GAN with ProjectedDiscriminator):
+```shell
+python scripts/training/train-mosaic-restoration-basicvsrpp.py configs/basicvsrpp/mosaic_restoration_generic_stage2_projected.py --load-from experiments/basicvsrpp/mosaic_restoration_generic_stage1/iter_10000_converted.pth
+```
+
+Stage 2 (GAN with original UNet discriminator):
+```shell
+python scripts/training/train-mosaic-restoration-basicvsrpp.py configs/basicvsrpp/mosaic_restoration_generic_stage2.py --load-from experiments/basicvsrpp/mosaic_restoration_generic_stage1/iter_10000_converted.pth
+```
+
+### Configuration
+
 Note that the model is implemented in the MMagic / MMEngine framework. If you need to adjust model or training parameters you can do that by adjusting
-the files in the `config` directory.
+the files in the `configs/rvrt/` or `configs/basicvsrpp/` directories.
+
+Key RVRT generator parameters in config:
+- `mid_channels=64`: Feature channel dimension
+- `num_blocks=8`: RVRT transformer blocks per group (increase for more capacity)
+- `num_heads=8`: GDA attention heads
+- `num_points=9`: Sampling points per attention head
+- `group_size=3`: Frames per processing group
+- `mlp_ratio=2.66`: FFN expansion ratio
 
 I'd recommend to read through [MMengine documentation](https://mmengine.readthedocs.io/en/latest/) first if you're not familiar with that library.
 
@@ -169,7 +258,7 @@ Now let's train the model
 > [!NOTE]
 > To continue switch back to lada virtual environment `.venv`. Use the `.venv_labelme` only when annotating files in labelme.
 
-We're training a YOLO v11 segmentation model (`yolo11m-seg`).
+We're training a YOLO26 segmentation model (`yolo26m-seg`, Ultralytics >= 8.4.0).
 YOLO or rather the library we're using to train it (*ultralytics*) does not support labelme format so we'll have to convert into the format they can understand:
 ```shell
 mkdir -p datasets/nsfw_detection/{train,val}/{images,labels}
@@ -188,7 +277,7 @@ python scripts/training/train-nsfw-detection-yolo.py
 
 Once that is done test it on some real-world NSFW videos (not from the source material you've been training with) using the following script:
 ```shell
-python scripts/evaluation/view-yolo.py --input <path to your nsfw file> --model-path experiments/yolo/segment/train_nsfw_detection_yolo11m/weights/best.pt --screenshot-dir datasets/nsfw_detection_labelme/train
+python scripts/evaluation/view-yolo.py --input <path to your nsfw file> --model-path experiments/yolo/segment/train_nsfw_detection_yolo26m/weights/best.pt --screenshot-dir datasets/nsfw_detection_labelme/train
 ```
 
 This will open a very simple GUI where you can seek through the video frame-by-frame to check the detection result (masks and prediction confidence levels).

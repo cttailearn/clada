@@ -182,7 +182,9 @@ Source code and models are licensed under AGPL-3.0. See the [LICENSE.md](LICENSE
 This project builds upon work done by these fantastic individuals and projects:
 
 * [DeepMosaics](https://github.com/HypoX64/DeepMosaics): Provided code for mosaic dataset creation. Also inspired me to start this project.
-* [BasicVSR++](https://ckkelvinchan.github.io/projects/BasicVSR++) / [MMagic](https://github.com/open-mmlab/mmagic): Used as the base model for mosaic removal.
+* [BasicVSR++](https://ckkelvinchan.github.io/projects/BasicVSR++) / [MMagic](https://github.com/open-mmlab/mmagic): Used as the base model architecture for mosaic removal.
+* [RVRT](https://github.com/JingyunLiang/RVRT) (Recurrent Video Restoration Transformer, NeurIPS 2022): Guided Deformable Attention generator for improved temporal alignment and generation quality.
+* [Projected GAN](https://github.com/autonomousvision/projected-gan) (Sauer et al., NeurIPS 2021): Pre-trained feature network discriminator with hinge loss and R1 regularization for enhanced generative capability.
 * [YOLO/Ultralytics](https://github.com/ultralytics/ultralytics): Used for training mosaic and NSFW detection models.
 * [DOVER](https://github.com/VQAssessment/DOVER):  Used to assess video quality of created clips during the dataset creation process to filter out low-quality clips.
 * [DNN Watermark / PITA Dataset](https://github.com/tgenlis83/dnn-watermark): Used most of its code for creating a watermark detection dataset used to filter out scenes obstructed by text/watermarks/logos.

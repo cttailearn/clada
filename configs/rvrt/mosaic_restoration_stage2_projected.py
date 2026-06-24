@@ -1,0 +1,138 @@
+from mmengine.config import read_base
+
+with read_base():
+    from ._base_.default_runtime import *
+
+experiment_name = 'mosaic_restoration_rvrt_stage2_projected'
+work_dir = f'./experiments/rvrt/{experiment_name}'
+save_dir = './experiments/rvrt'
+
+model = dict(
+    type='RVRTGan',
+    generator=dict(
+        type='RVRTGanNet',
+        mid_channels=64,
+        num_blocks=8,
+        num_heads=8,
+        num_points=9,
+        group_size=3,
+        group_overlap=1,
+        mlp_ratio=2.66),
+    discriminator=dict(
+        type='ProjectedDiscriminator',
+        in_channels=3,
+        mid_channels=64,
+        feature_network='efficientnet-b0',
+        use_spectral_norm=False),
+    pixel_loss=dict(type='CharbonnierLoss', loss_weight=1.0, reduction='mean'),
+    perceptual_loss=dict(
+        type='PerceptualLoss',
+        layer_weights={
+            '2': 0.1,
+            '7': 0.1,
+            '16': 1.0,
+            '25': 1.0,
+            '34': 1.0,
+        },
+        vgg_type='vgg19',
+        pretrained='model_weights/3rd_party/vgg19-dcbb9e9d.pth',
+        perceptual_weight=0.2,
+        style_weight=0,
+        norm_img=False),
+    gan_loss=dict(
+        type='GANLoss',
+        gan_type='hinge',
+        loss_weight=0.1,
+    ),
+    r1_weight=1.0,
+    r1_interval=1,
+    is_use_ema=True,
+    data_preprocessor=dict(
+        type='DataPreprocessor',
+        mean=[0., 0., 0.],
+        std=[255., 255., 255.],
+    ))
+
+data_root = 'datasets/mosaic_removal_vid'
+
+train_dataloader = dict(
+    num_workers=4,
+    batch_size=2,
+    persistent_workers=False,
+    sampler=dict(type='InfiniteSampler', shuffle=True),
+    dataset=dict(
+        type='MosaicVideoDataset',
+        metadata_root_dir=data_root + "/train/crop_unscaled_meta",
+        num_frame=16,
+        degrade=True,
+        use_hflip=True,
+        repeatable_random=False,
+        random_mosaic_params=True,
+        filter_watermark=False,
+        filter_nudenet_nsfw=False,
+        filter_video_quality=False,
+        lq_size=256),
+    collate_fn=dict(type='default_collate'))
+
+val_dataloader = dict(
+    num_workers=1,
+    batch_size=1,
+    persistent_workers=False,
+    sampler=dict(type='DefaultSampler', shuffle=False),
+    dataset=dict(
+        type='MosaicVideoDataset',
+        metadata_root_dir=data_root + "/val/crop_unscaled_meta",
+        num_frame=30,
+        degrade=True,
+        use_hflip=False,
+        repeatable_random=True,
+        random_mosaic_params=True,
+        filter_watermark=False,
+        filter_nudenet_nsfw=False,
+        filter_video_quality=False,
+        lq_size=256),
+    collate_fn=dict(type='default_collate'))
+
+val_evaluator = dict(
+    type='Evaluator', metrics=[
+        dict(type='PSNR'),
+        dict(type='SSIM'),
+    ])
+
+train_cfg = dict(
+    type='IterBasedTrainLoop', max_iters=150_000, val_interval=4000)
+val_cfg = dict(type='MultiValLoop')
+
+optim_wrapper = dict(
+    constructor='MultiOptimWrapperConstructor',
+    generator=dict(
+        type='OptimWrapper',
+        optimizer=dict(type='Adam', lr=5e-5, betas=(0.9, 0.99))),
+    discriminator=dict(
+        type='OptimWrapper',
+        optimizer=dict(type='Adam', lr=5e-5, betas=(0.9, 0.99))),
+)
+
+vis_backends = [dict(type='TensorboardVisBackend')]
+visualizer = dict(
+    name='visualizer',
+    type='ConcatImageVisualizer',
+    vis_backends=vis_backends,
+    fn_key='gt_path',
+    img_keys=['gt_img', 'input', 'pred_img'],
+    bgr2rgb=True)
+custom_hooks = [
+    dict(type='BasicVisualizationHook', interval=5),
+    dict(
+        type='ExponentialMovingAverageHook',
+        module_keys=('generator_ema'),
+        interval=1,
+        interp_cfg=dict(momentum=0.001),
+    )
+]
+
+default_hooks = dict(
+    checkpoint=dict(type='CheckpointHook', by_epoch=False, interval=2000, out_dir=save_dir),
+    logger=dict(type='LoggerHook', interval=100, log_metric_by_epoch=False),
+    param_scheduler=dict(type='ParamSchedulerHook'),
+)
